@@ -1,0 +1,156 @@
+#!/bin/sh
+# rose firewall
+# script to make firewall so ease
+# and Activates/Deactivates the firewall at boot time
+
+# Copyright (c) 2012 ali abdul ghani <blade.vp2020@gmail.com>
+#    This Program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU  General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#    This Program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+ #    You should have received a copy of the GNU General Public License
+#    along with this library.  If not, see <http://www.gnu.org/licenses/>.
+
+
+### BEGIN INIT INFO
+# Required-Start:    $local_fs
+# Required-Stop:     $local_fs
+# Default-Start:     S
+# Default-Stop:      0 6
+# X-Start-Before:    $network
+# X-Stop-After:      $network
+### END INIT INFO
+#
+#
+# Caveats:
+# - This configuration applies to all network interfaces
+#   if you want to restrict this to only a given interface use
+#   '-i INTERFACE' in the iptables calls.
+# - Remote access for TCP/UDP services is granted to any host, 
+#   you probably will want to restrict this using '--source'.
+#
+# chkconfig: 2345 9 91
+#
+# You can test this script before applying with the following shell
+# snippet, if you do not type anything in 10 seconds the firewall
+# rules will be cleared.
+#---------------------------------------------------------------
+#  while true; do test=""; read  -t 20 -p "OK? " test ; \
+#  [ -z "$test" ] && /etc/init.d/myfirewall clear ; done
+#---------------------------------------------------------------
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+# Services that the system will offer to the network
+TCP_SERVICES=""
+UDP_SERVICES=""
+# Services the system will use from the network
+REMOTE_TCP_SERVICES=""
+REMOTE_UDP_SERVICES=""
+
+
+if ! [ -x /sbin/iptables ]; then  
+    exit 0
+fi
+
+fw_start () {
+    
+    # Input traffic:
+    /sbin/iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    # Services
+    if [ -n "$TCP_SERVICES" ] ; then
+	for PORT in $TCP_SERVICES; do
+	    /sbin/iptables -A INPUT -p tcp --dport ${PORT} -j ACCEPT
+	done
+    fi
+    if [ -n "$UDP_SERVICES" ] ; then
+	for PORT in $UDP_SERVICES; do
+	    /sbin/iptables -A INPUT -p udp --dport ${PORT} -j ACCEPT
+	done
+    fi
+
+    /sbin/iptables -A INPUT -p icmp -j ACCEPT
+    /sbin/iptables -A INPUT -i lo -j ACCEPT
+    /sbin/iptables -P INPUT DROP
+    /sbin/iptables -A INPUT -j LOG
+    
+    # Output:
+    /sbin/iptables -A OUTPUT -j ACCEPT -o lo 
+    /sbin/iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    # ICMP is permitted:
+    /sbin/iptables -A OUTPUT -p icmp -j ACCEPT
+
+    if [ -n "$REMOTE_TCP_SERVICES" ] ; then
+	for PORT in $REMOTE_TCP_SERVICES; do
+	    /sbin/iptables -A OUTPUT -p tcp --dport ${PORT} -j ACCEPT
+	done
+    fi
+    if [ -n "$REMOTE_UDP_SERVICES" ] ; then
+	for PORT in $REMOTE_UDP_SERVICES; do
+	    /sbin/iptables -A OUTPUT -p udp --dport ${PORT} -j ACCEPT
+	done
+    fi
+
+    # All other connections are registered in syslog
+    /sbin/iptables -A OUTPUT -j LOG
+    /sbin/iptables -A OUTPUT -j REJECT 
+    /sbin/iptables -P OUTPUT DROP
+    # Other network protections
+    # (some will only work with some kernel versions)
+    echo 1 > /proc/sys/net/ipv4/tcp_syncookies
+    echo 0 > /proc/sys/net/ipv4/ip_forward 
+    echo 1 > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts 
+    echo 1 > /proc/sys/net/ipv4/conf/all/log_martians 
+    #echo 1 > /proc/sys/net/ipv4/ip_always_defrag
+    echo 1 > /proc/sys/net/ipv4/icmp_ignore_bogus_error_responses
+    echo 1 > /proc/sys/net/ipv4/conf/all/rp_filter
+    echo 0 > /proc/sys/net/ipv4/conf/all/send_redirects
+    echo 0 > /proc/sys/net/ipv4/conf/all/accept_source_route
+    
+}
+
+fw_stop () {
+    /sbin/iptables -F
+    /sbin/iptables -t nat -F
+    /sbin/iptables -t mangle -F
+    /sbin/iptables -P INPUT DROP
+    /sbin/iptables -P FORWARD DROP
+    /sbin/iptables -P OUTPUT ACCEPT
+}
+
+fw_clear () {
+    /sbin/iptables -F
+    /sbin/iptables -t nat -F
+    /sbin/iptables -t mangle -F
+    /sbin/iptables -P INPUT ACCEPT
+    /sbin/iptables -P FORWARD ACCEPT
+    /sbin/iptables -P OUTPUT ACCEPT
+}
+
+case "$1" in
+    start|restart)
+        echo -n "Starting firewall.."
+        fw_stop 
+        fw_start
+        echo "done."
+        ;;
+    stop)
+        echo -n "Stopping firewall.."
+        fw_stop
+        echo "done."
+        ;;
+    clear)
+        echo -n "Clearing firewall rules.."
+        fw_clear
+        echo "done."
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|clear}"
+        exit 1
+        ;;
+esac
+exit 0
